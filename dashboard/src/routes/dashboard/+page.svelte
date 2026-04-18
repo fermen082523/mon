@@ -102,114 +102,126 @@
 	<title>Dashboard - RTV</title>
 </svelte:head>
 
-<div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 md:py-10 space-y-8 md:space-y-12">
-	<!-- Title Section -->
-	<div class="flex flex-col md:flex-row md:items-end justify-between gap-4">
-		<div>
-			<h2 class="text-2xl md:text-4xl font-black text-slate-900 tracking-tight">Panel de Control</h2>
-			<div class="flex items-center gap-2 mt-1">
-				<span class="relative flex h-2 w-2">
-					<span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-					<span class="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
-				</span>
-				<p class="text-xs md:text-sm font-bold text-slate-500 uppercase tracking-widest">Monitoreo en vivo</p>
+<div class="relative min-h-screen bg-[#f8fafc]">
+	<!-- Background Color Accents -->
+	<div class="fixed inset-0 overflow-hidden pointer-events-none">
+		<div class="absolute -top-[10%] -left-[10%] w-[50%] h-[50%] bg-indigo-500/10 blur-[120px] rounded-full"></div>
+		<div class="absolute bottom-0 right-0 w-[40%] h-[40%] bg-rose-500/10 blur-[120px] rounded-full"></div>
+	</div>
+
+	<div class="relative max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 md:py-10 space-y-8 md:space-y-12">
+		<!-- Header / Title -->
+		<div class="flex items-center justify-between">
+			<div class="space-y-1">
+				<div class="flex items-center gap-2">
+					<div class="h-2 w-2 rounded-full bg-emerald-500 animate-pulse"></div>
+					<span class="text-[10px] font-black text-slate-400 uppercase tracking-[0.3em]">Sistema de Control</span>
+				</div>
+				<h2 class="text-3xl md:text-5xl font-black text-slate-900 tracking-tighter">Panel Central</h2>
 			</div>
-		</div>
-		
-		<div class="hidden md:block">
+			
 			<button 
 				on:click={() => { loadStats(); loadOrdenes(); }}
-				class="inline-flex items-center px-4 py-2 bg-white border border-slate-200 rounded-xl text-sm font-bold text-slate-700 hover:bg-slate-50 transition-all shadow-sm active:scale-95"
+				class="h-14 w-14 bg-white border border-slate-200 rounded-[1.5rem] flex items-center justify-center text-slate-700 hover:shadow-xl hover:border-indigo-200 hover:text-indigo-600 transition-all active:scale-90 shadow-sm"
 			>
-				<svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-					<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+				<svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+					<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
 				</svg>
-				Actualizar
 			</button>
 		</div>
-	</div>
 
-	<!-- Statistics Grid -->
-	<div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3 md:gap-6">
-		<StatCard label="En Cola" value={stats.pendiente} estado="pendiente" color="blue" />
-		<StatCard label="Solicitadas" value={stats.solicitada} estado="solicitada" color="yellow" />
-		<StatCard label="Finalizadas" value={stats.finalizada} estado="finalizada" color="green" />
-		<StatCard label="Errores" value={stats.error} estado="error" color="red" />
-		<StatCard label="Anuladas" value={stats.anulada} estado="anulada" color="purple" />
-	</div>
-
-	<!-- Filters & Content -->
-	<div class="space-y-6">
-		<div class="flex flex-col gap-6">
-			<!-- Search Bar -->
-			<div class="relative group">
-				<div class="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
-					<svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 text-slate-400 group-focus-within:text-indigo-500 transition-colors" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-						<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-					</svg>
-				</div>
-				<input
-					type="text"
-					bind:value={searchQuery}
-					placeholder="Buscar por placa, orden o etiqueta..."
-					class="block w-full pl-11 pr-4 py-3.5 bg-white border border-slate-200 rounded-2xl text-sm font-medium placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all shadow-sm"
-				/>
-				{#if searchQuery}
-					<button 
-						on:click={() => searchQuery = ''}
-						class="absolute inset-y-0 right-0 pr-4 flex items-center text-slate-400 hover:text-slate-600"
-					>
-						<svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
-							<path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clip-rule="evenodd" />
-						</svg>
-					</button>
-				{/if}
+		<!-- Statistics Carousel -->
+		<div class="flex overflow-x-auto pb-6 -mx-4 px-4 md:mx-0 md:px-0 no-scrollbar gap-5 md:grid md:grid-cols-5">
+			<div class="min-w-[160px] md:min-w-0">
+				<StatCard label="En Cola" value={stats.pendiente} estado="pendiente" color="blue" />
 			</div>
-
-			<div class="flex flex-col gap-4">
-				<div class="flex items-center justify-between">
-					<h3 class="text-sm font-black text-slate-900 uppercase tracking-widest">Estado</h3>
-					{#if filter !== 'todas' || searchQuery.length >= 2}
-						<button 
-							on:click={() => { filter = 'todas'; searchQuery = ''; loadOrdenes(); }}
-							class="text-[10px] font-bold text-indigo-600 uppercase tracking-tighter hover:underline"
-						>
-							Limpiar Filtros
-						</button>
-					{/if}
-				</div>
-				
-				<div class="flex overflow-x-auto pb-2 -mx-4 px-4 md:mx-0 md:px-0 no-scrollbar gap-2">
-					{#each ['todas', 'PENDIENTE_SOLICITUD', 'SOLICITADA', 'FINALIZADA', 'ERROR'] as f}
-						<button
-							on:click={() => handleFilterChange(f)}
-							class={`whitespace-nowrap px-5 py-2.5 rounded-xl text-xs font-bold transition-all border ${
-								filter === f
-									? 'bg-slate-900 text-white border-slate-900 shadow-md shadow-slate-200'
-									: 'bg-white text-slate-600 border-slate-200 hover:border-slate-300'
-							}`}
-						>
-							{f === 'todas' ? 'Todas' : f === 'PENDIENTE_SOLICITUD' ? 'En Cola' : f.charAt(0) + f.slice(1).toLowerCase()}
-						</button>
-					{/each}
-				</div>
+			<div class="min-w-[160px] md:min-w-0">
+				<StatCard label="Solicitadas" value={stats.solicitada} estado="solicitada" color="yellow" />
+			</div>
+			<div class="min-w-[160px] md:min-w-0">
+				<StatCard label="Finalizadas" value={stats.finalizada} estado="finalizada" color="green" />
+			</div>
+			<div class="min-w-[160px] md:min-w-0">
+				<StatCard label="Errores" value={stats.error} estado="error" color="red" />
+			</div>
+			<div class="min-w-[160px] md:min-w-0">
+				<StatCard label="Anuladas" value={stats.anulada} estado="anulada" color="purple" />
 			</div>
 		</div>
 
-		<!-- Main Content Area -->
-		<div class="relative min-h-[400px]">
-			{#if loading}
-				<div class="absolute inset-0 flex items-center justify-center bg-gray-50/50 backdrop-blur-[2px] z-10 rounded-2xl">
-					<div class="flex flex-col items-center">
-						<div class="h-10 w-10 border-4 border-indigo-600/20 border-t-indigo-600 rounded-full animate-spin"></div>
-						<p class="text-xs font-bold text-slate-500 mt-4 uppercase tracking-widest">Sincronizando...</p>
+		<!-- Content / Filters Sticky -->
+		<div class="space-y-6">
+			<div class="sticky top-[50px] md:top-[70px] z-50 py-4 -mx-4 px-4 md:mx-0 md:px-0 bg-[#f8fafc]/80 backdrop-blur-md">
+				<div class="flex flex-col gap-5">
+					<!-- Search -->
+					<div class="relative group">
+						<div class="absolute inset-y-0 left-0 pl-5 flex items-center pointer-events-none text-slate-400">
+							<svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+								<path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+							</svg>
+						</div>
+						<input
+							type="text"
+							bind:value={searchQuery}
+							placeholder="Buscar placa o reporte..."
+							class="block w-full pl-12 pr-6 py-4 bg-white border-2 border-slate-100 rounded-[1.5rem] text-sm font-black placeholder:text-slate-300 focus:outline-none focus:ring-8 focus:ring-indigo-500/5 focus:border-indigo-500 transition-all shadow-sm"
+						/>
+					</div>
+
+					<!-- Filter Tabs -->
+					<div class="flex overflow-x-auto no-scrollbar gap-3 py-2">
+						{@const filters = [
+							{ id: 'todas', label: 'Todos', color: '#64748b' },
+							{ id: 'PENDIENTE_SOLICITUD', label: 'En Cola', color: '#4f46e5' },
+							{ id: 'SOLICITADA', label: 'Solicitadas', color: '#f59e0b' },
+							{ id: 'FINALIZADA', label: 'Finalizadas', color: '#10b981' },
+							{ id: 'ERROR', label: 'Errores', color: '#ef4444' }
+						]}
+						
+						{#each filters as f}
+							<button
+								on:click={() => handleFilterChange(f.id)}
+								class="whitespace-nowrap px-6 py-3 rounded-2xl text-[10px] font-black uppercase tracking-[0.2em] transition-all border-2 active:scale-90"
+								style="
+									background-color: {filter === f.id ? f.color : 'white'};
+									color: {filter === f.id ? 'white' : f.color};
+									border-color: {f.color};
+									box-shadow: {filter === f.id ? `0 10px 20px -5px ${f.color}66` : 'none'};
+									opacity: {filter === f.id ? '1' : '0.7'};
+								"
+							>
+								{f.label}
+							</button>
+						{/each}
 					</div>
 				</div>
-			{/if}
+			</div>
 
-			<div class={loading ? 'opacity-50 pointer-events-none' : ''}>
-				<OrdenesTable ordenes={filteredOrdenes} {isMonitor} />
+			<!-- List -->
+			<div class="relative min-h-[400px]">
+				{#if loading}
+					<div class="absolute inset-0 flex items-center justify-center z-10">
+						<div class="flex flex-col items-center gap-4">
+							<div class="h-12 w-12 border-4 border-indigo-600 border-t-transparent rounded-full animate-spin"></div>
+							<p class="text-[10px] font-black text-slate-400 uppercase tracking-widest">Sincronizando</p>
+						</div>
+					</div>
+				{/if}
+
+				<div class={loading ? 'opacity-20 pointer-events-none blur-sm' : 'transition-all duration-500'}>
+					<OrdenesTable ordenes={filteredOrdenes} {isMonitor} />
+				</div>
 			</div>
 		</div>
 	</div>
 </div>
+
+<style>
+	.no-scrollbar::-webkit-scrollbar {
+		display: none;
+	}
+	.no-scrollbar {
+		-ms-overflow-style: none;
+		scrollbar-width: none;
+	}
+</style>

@@ -8,19 +8,47 @@
 	export let color: string = 'blue';
 
 	const displayedValue = tweened(0, {
-		duration: 400,
+		duration: 600,
 		easing: cubicOut
 	});
 
 	$: displayedValue.set(value);
 
-	const colorMap: Record<string, string> = {
-		blue: 'bg-blue-50/50 text-blue-700 border-blue-100 ring-blue-500/5 hover:bg-blue-50',
-		green: 'bg-emerald-50/50 text-emerald-700 border-emerald-100 ring-emerald-500/5 hover:bg-emerald-50',
-		yellow: 'bg-amber-50/50 text-amber-700 border-amber-100 ring-amber-500/5 hover:bg-amber-50',
-		red: 'bg-rose-50/50 text-rose-700 border-rose-100 ring-rose-500/5 hover:bg-rose-50',
-		purple: 'bg-indigo-50/50 text-indigo-700 border-indigo-100 ring-indigo-500/5 hover:bg-indigo-50',
+	// Colores ultra-vibrantes con degradados
+	const themeMap: Record<string, { bg: string, text: string, iconBg: string, shadow: string }> = {
+		blue: {
+			bg: 'linear-gradient(135deg, #4f46e5 0%, #3b82f6 100%)',
+			text: '#ffffff',
+			iconBg: 'rgba(255, 255, 255, 0.2)',
+			shadow: '0 10px 25px -5px rgba(59, 130, 246, 0.5)'
+		},
+		green: {
+			bg: 'linear-gradient(135deg, #059669 0%, #10b981 100%)',
+			text: '#ffffff',
+			iconBg: 'rgba(255, 255, 255, 0.2)',
+			shadow: '0 10px 25px -5px rgba(16, 185, 129, 0.5)'
+		},
+		yellow: {
+			bg: 'linear-gradient(135deg, #d97706 0%, #f59e0b 100%)',
+			text: '#ffffff',
+			iconBg: 'rgba(255, 255, 255, 0.2)',
+			shadow: '0 10px 25px -5px rgba(245, 158, 11, 0.5)'
+		},
+		red: {
+			bg: 'linear-gradient(135deg, #dc2626 0%, #ef4444 100%)',
+			text: '#ffffff',
+			iconBg: 'rgba(255, 255, 255, 0.2)',
+			shadow: '0 10px 25px -5px rgba(239, 68, 68, 0.5)'
+		},
+		purple: {
+			bg: 'linear-gradient(135deg, #7c3aed 0%, #8b5cf6 100%)',
+			text: '#ffffff',
+			iconBg: 'rgba(255, 255, 255, 0.2)',
+			shadow: '0 10px 25px -5px rgba(139, 92, 246, 0.5)'
+		}
 	};
+
+	const theme = themeMap[color] || themeMap.blue;
 
 	const iconMap: Record<string, string> = {
 		pendiente: '⏳',
@@ -31,23 +59,26 @@
 	};
 </script>
 
-<div class={`p-4 md:p-6 border rounded-3xl ring-1 transition-all duration-500 group overflow-hidden relative ${colorMap[color]}`}>
-	<!-- Decorative Background Circle -->
-	<div class="absolute -right-2 -bottom-2 h-16 w-16 bg-current opacity-[0.03] rounded-full scale-150 transition-transform group-hover:scale-[2] duration-700"></div>
-
+<div 
+	class="p-4 md:p-6 rounded-[2rem] transition-all duration-500 group overflow-hidden relative border border-white/10 active:scale-95 touch-none"
+	style="background: {theme.bg}; color: {theme.text}; box-shadow: {theme.shadow};"
+>
+	<!-- Shine effect -->
+	<div class="absolute -right-4 -top-4 h-32 w-32 bg-white/20 blur-3xl rounded-full transition-transform group-hover:scale-150 duration-700"></div>
+	
 	<div class="flex items-center justify-between relative z-10">
 		<div class="space-y-1">
-			<p class="text-[10px] md:text-xs font-bold uppercase tracking-[0.15em] opacity-60">{label}</p>
-			<div class="flex items-baseline gap-1">
-				<p class="text-2xl md:text-4xl font-black tracking-tighter leading-none">
+			<p class="text-[9px] md:text-xs font-black uppercase tracking-[0.2em] opacity-90">{label}</p>
+			<div class="flex items-baseline">
+				<p class="text-3xl md:text-5xl font-black tracking-tighter leading-none">
 					{Math.round($displayedValue)}
 				</p>
-				{#if value > 0}
-					<span class="h-1.5 w-1.5 rounded-full bg-current animate-pulse"></span>
-				{/if}
 			</div>
 		</div>
-		<div class="h-12 w-12 md:h-14 md:w-14 rounded-2xl bg-white shadow-sm border border-white/60 flex items-center justify-center text-2xl md:text-3xl transition-transform group-hover:scale-110 group-hover:rotate-3 duration-300">
+		<div 
+			class="h-10 w-10 md:h-16 md:w-16 rounded-2xl md:rounded-3xl backdrop-blur-md flex items-center justify-center text-xl md:text-4xl shadow-inner border border-white/30 transition-all group-hover:scale-110 group-hover:rotate-6 duration-300"
+			style="background: {theme.iconBg};"
+		>
 			{iconMap[estado] || '📊'}
 		</div>
 	</div>
