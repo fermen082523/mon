@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+
+# Bases de datos
+*.db
+*.sqlite3
+*.db-journal
+*.db-shm
+*.db-wal
+
+# Variables de entorno (NUNCA subir)
+.env
+.env.*
+!.env.example
+
+# Dashboard
+dashboard/node_modules/
+dashboard/dist/
+dashboard/.env.local
+dashboard/.env
+dashboard/.env.*
+
+# OS
+.DS_Store
+Thumbs.db
