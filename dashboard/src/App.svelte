@@ -29,9 +29,11 @@
   let filtroEstado = 'TODAS';
   let searchPlateInput = '';
   let activeSearchPlate = '';
+  let searchDebounceTimer = null;
 
   let monitorOwnCount = 0;
   let monitorOthersCount = 0;
+  let totalHoy = 0;
 
   let ingestTag = '';
   let ingestText = '';
@@ -49,10 +51,6 @@
   let myNewPasswordConfirm = '';
   let myPasswordReport = '';
   let loadingMyPassword = false;
-
-  $: ordenesFiltradas = filtroEstado === 'TODAS'
-    ? ordenes
-    : ordenes.filter((o) => o.estado === filtroEstado);
 
   function normalizeTag(tag) {
     return (tag || '').trim().toLowerCase();
@@ -97,7 +95,17 @@
   function applyRoleScope(query) {
     if (isMonitor()) {
       const tag = normalizeTag(currentUser?.etiqueta);
-      return query.eq('etiqueta', tag);
+      // Inicio del día en GMT-5: medianoche local GMT-5 = 05:00 UTC
+      const ahora = new Date();
+      const offsetMs = 5 * 60 * 60 * 1000; // UTC-5
+      const enGmt5 = new Date(ahora.getTime() - offsetMs);
+      // Trucamos al inicio del día en GMT-5
+      enGmt5.setUTCHours(0, 0, 0, 0);
+      // Convertimos de vuelta a UTC para la query (supabase almacena en UTC)
+      const hoyInicioUTC = new Date(enGmt5.getTime() + offsetMs);
+      return query
+        .eq('etiqueta', tag)
+        .gte('created_at', hoyInicioUTC.toISOString());
     }
     return query;
   }
@@ -140,6 +148,9 @@
 
     query = applyRoleScope(query);
     query = applySearchScope(query);
+    if (filtroEstado !== 'TODAS') {
+      query = query.eq('estado', filtroEstado);
+    }
 
     const from = (targetPage - 1) * PAGE_SIZE;
     const to = from + PAGE_SIZE - 1;
@@ -238,6 +249,21 @@
     monitorOthersCount = others.count ?? 0;
   }
 
+  async function loadTotalHoy() {
+    const ahora = new Date();
+    const offsetMs = 5 * 60 * 60 * 1000; // UTC-5 (Colombia)
+    const enGmt5 = new Date(ahora.getTime() - offsetMs);
+    enGmt5.setUTCHours(0, 0, 0, 0);
+    const hoyInicioUTC = new Date(enGmt5.getTime() + offsetMs);
+
+    const { count } = await supabase
+      .from('rtv_ordenes')
+      .select('local_id', { count: 'exact', head: true })
+      .gte('created_at', hoyInicioUTC.toISOString());
+
+    totalHoy = count ?? 0;
+  }
+
   async function refreshDashboard(targetPage = page) {
     await Promise.all([
       loadOrdenes(targetPage),
@@ -245,6 +271,7 @@
       loadGlobalStats(),
       loadColaActiva(),
       loadMonitorCounters(),
+      loadTotalHoy(),
     ]);
   }
 
@@ -343,17 +370,21 @@
     localStorage.removeItem(SESSION_KEY);
   }
 
-  async function searchByPlate() {
+
+  async function searchByPlate(val) {
     loadingSearch = true;
-    activeSearchPlate = searchPlateInput.trim().toUpperCase();
+    activeSearchPlate = val.trim().toUpperCase();
     await refreshDashboard(1);
     loadingSearch = false;
   }
 
   async function handleSearchInput() {
     const val = searchPlateInput.trim();
+    if (searchDebounceTimer) clearTimeout(searchDebounceTimer);
     if (val.length >= 2) {
-      await searchByPlate();
+      searchDebounceTimer = setTimeout(async () => {
+        await searchByPlate(searchPlateInput);
+      }, 350);
     } else if (val.length === 0) {
       activeSearchPlate = '';
       await refreshDashboard(1);
@@ -611,10 +642,10 @@
 </script>
 
 {#if !currentUser}
-  <main class="min-h-[100dvh] bg-[#f8fafc] flex flex-col justify-center items-center p-4 py-12 relative overflow-x-hidden overflow-y-auto">
-    <!-- Decorative background -->
-    <div class="absolute -top-[10%] -left-[10%] w-[50%] h-[50%] bg-indigo-500/10 blur-[120px] rounded-full pointer-events-none"></div>
-    <div class="absolute bottom-0 right-0 w-[40%] h-[40%] bg-rose-500/10 blur-[120px] rounded-full pointer-events-none"></div>
+  <main class="min-h-[100dvh] bg-[#f8fafc] flex flex-col items-center md:justify-center p-4 pt-16 md:pt-4 pb-12 relative overflow-x-hidden overflow-y-auto">
+    <!-- Decorative background (No blur for Safari performance) -->
+    <div class="absolute -top-[10%] -left-[10%] w-[50%] h-[50%] bg-indigo-500/5 rounded-full pointer-events-none"></div>
+    <div class="absolute bottom-0 right-0 w-[40%] h-[40%] bg-rose-500/5 rounded-full pointer-events-none"></div>
 
     <section class="w-full max-w-md bg-white/80 backdrop-blur-xl rounded-[2rem] shadow-2xl p-8 border border-white relative z-10">
       <div class="flex justify-center mb-6">
@@ -644,11 +675,11 @@
     </section>
   </main>
 {:else}
-  <main class="relative min-h-screen bg-[#f8fafc] pb-20 md:pb-10">
-    <!-- Background Color Accents -->
+  <main class="relative min-h-[100dvh] bg-[#f8fafc] pb-20 md:pb-10">
+    <!-- Background Color Accents (No blur for Safari performance) -->
     <div class="fixed inset-0 overflow-hidden pointer-events-none z-0">
-      <div class="absolute -top-[10%] -left-[10%] w-[50%] h-[50%] bg-indigo-500/10 blur-[120px] rounded-full"></div>
-      <div class="absolute bottom-0 right-0 w-[40%] h-[40%] bg-rose-500/10 blur-[120px] rounded-full"></div>
+      <div class="absolute -top-[10%] -left-[10%] w-[50%] h-[50%] bg-indigo-500/5 rounded-full"></div>
+      <div class="absolute bottom-0 right-0 w-[40%] h-[40%] bg-rose-500/5 rounded-full"></div>
     </div>
 
     <!-- Header App Style -->
@@ -742,6 +773,20 @@
         <!-- ...resto de menus de operador... -->
       {/if}
 
+      <!-- Total del día - visible para todos los roles -->
+      <div class="flex items-center gap-5 bg-white rounded-[2rem] border border-slate-100 shadow-sm px-6 py-5 overflow-hidden relative">
+        <div class="absolute right-0 top-0 h-full w-32 bg-gradient-to-l from-emerald-50 to-transparent pointer-events-none"></div>
+        <div class="h-12 w-12 shrink-0 bg-gradient-to-br from-emerald-500 to-teal-600 rounded-2xl flex items-center justify-center shadow-lg shadow-emerald-200/60">
+          <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+          </svg>
+        </div>
+        <div>
+          <p class="text-[10px] font-black uppercase tracking-[0.3em] text-slate-400">Órdenes Hoy</p>
+          <p class="text-4xl md:text-5xl font-black text-slate-900 tracking-tighter leading-none">{totalHoy}</p>
+        </div>
+      </div>
+
       <!-- Main Statistics Row -->
       {#if !isDigitador()}
         <div class="grid grid-cols-2 md:grid-cols-5 gap-3">
@@ -784,7 +829,7 @@
               { id: 'ANULADA', label: 'Anuladas', color: '#64748b' }
             ] as f}
               <button
-                on:click={() => (filtroEstado = f.id)}
+                on:click={async () => { filtroEstado = f.id; await refreshDashboard(1); }}
                 class="whitespace-nowrap px-5 py-2.5 rounded-2xl text-[10px] font-black uppercase tracking-[0.2em] transition-all border-2 active:scale-90"
                 style="
                   background-color: {filtroEstado === f.id ? f.color : 'white'};
@@ -813,7 +858,7 @@
         {/if}
 
         <div class={loadingData ? 'opacity-30 pointer-events-none transition-opacity duration-300' : 'transition-opacity duration-300'}>
-          <OrdenesTable ordenes={ordenesFiltradas} isMonitor={isMonitor()} />
+          <OrdenesTable ordenes={ordenes} isMonitor={isMonitor()} isDigitador={isDigitador()} />
         </div>
       </div>
 

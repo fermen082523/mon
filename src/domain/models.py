@@ -18,3 +18,4 @@ class Orden:
     numero_orden: Optional[str]
     estado: EstadoOrden
     intentos: int
+    etiqueta: Optional[str] = None

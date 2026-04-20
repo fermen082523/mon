@@ -48,6 +48,7 @@
 	}
 
 	async function loadOrdenes() {
+		loading = true;
 		try {
 			let query = supabase.from('rtv_ordenes').select('*').order('updated_at', { ascending: false });
 
@@ -86,7 +87,7 @@
 
 		const subscription = supabase
 			.channel('rtv_ordenes')
-			.on('*', { event: 'INSERT,UPDATE,DELETE', schema: 'public', table: 'rtv_ordenes' }, () => {
+			.on('postgres_changes', { event: '*', schema: 'public', table: 'rtv_ordenes' }, () => {
 				loadStats();
 				loadOrdenes();
 			})
@@ -175,7 +176,8 @@
 							{ id: 'PENDIENTE_SOLICITUD', label: 'En Cola', color: '#4f46e5' },
 							{ id: 'SOLICITADA', label: 'Solicitadas', color: '#f59e0b' },
 							{ id: 'FINALIZADA', label: 'Finalizadas', color: '#10b981' },
-							{ id: 'ERROR', label: 'Errores', color: '#ef4444' }
+							{ id: 'ERROR', label: 'Errores', color: '#ef4444' },
+							{ id: 'ANULADA', label: 'Anuladas', color: '#a855f7' }
 						]}
 						
 						{#each filters as f}

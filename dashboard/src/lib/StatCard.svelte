@@ -60,7 +60,7 @@
 </script>
 
 <div 
-	class="p-4 md:p-6 rounded-[2rem] transition-all duration-500 group overflow-hidden relative border border-white/10 active:scale-95 touch-none"
+	class="p-4 md:p-6 rounded-[2rem] transition-all duration-500 group overflow-hidden relative border border-white/10 active:scale-95"
 	style="background: {theme.bg}; color: {theme.text}; box-shadow: {theme.shadow};"
 >
 	<!-- Shine effect -->

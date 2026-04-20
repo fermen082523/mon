@@ -71,8 +71,9 @@ def cmd_ingest_paste(args: argparse.Namespace) -> None:
     print(f"[COLA] Pendientes para procesar: {pending}")
 
 
-def cmd_run_once(_: argparse.Namespace) -> None:
+def cmd_run_once(args: argparse.Namespace) -> None:
     _, worker = build_runtime()
+    worker.set_dispatch_mode(args.modo)
     processed = worker.process_next()
     if processed:
         print("Se proceso una placa (ok o error).")
@@ -80,10 +81,12 @@ def cmd_run_once(_: argparse.Namespace) -> None:
         print("No hay placas pendientes.")
 
 
-def cmd_run_loop(_: argparse.Namespace) -> None:
+def cmd_run_loop(args: argparse.Namespace) -> None:
     settings = get_settings()
     repository, worker = build_runtime()
+    worker.set_dispatch_mode(args.modo)
     print("Worker iniciado en modo loop. Ctrl+C para detener.")
+    print(f"[WORKER] Modo de despacho activo: {args.modo}")
     last_supabase_sync = 0.0
 
     idle_templates = [
@@ -97,6 +100,12 @@ def cmd_run_loop(_: argparse.Namespace) -> None:
         if dt_value.tzinfo is None:
             return dt_value.replace(tzinfo=timezone.utc)
         return dt_value.astimezone(timezone.utc)
+
+    def _fmt_placa_etiqueta(placa: str | None, etiqueta: str | None) -> str:
+        base = placa or "-"
+        if etiqueta:
+            return f"{base} [{etiqueta}]"
+        return base
 
     def _fmt_hora(iso_value: str | None) -> str:
         if not iso_value:
@@ -118,8 +127,18 @@ def cmd_run_loop(_: argparse.Namespace) -> None:
 
     def _siguiente_y_hora(overview: dict[str, object]) -> tuple[str, str]:
         open_count = int(overview.get("open_count", 0))
-        next_pending = overview.get("next_pending_plate") or "-"
-        next_finalize = overview.get("next_finalize_plate") or "-"
+        next_pending_plate = overview.get("next_pending_plate")
+        next_pending_tag = overview.get("next_pending_tag")
+        next_finalize_plate = overview.get("next_finalize_plate")
+        next_finalize_tag = overview.get("next_finalize_tag")
+        next_pending = _fmt_placa_etiqueta(
+            str(next_pending_plate) if next_pending_plate else None,
+            str(next_pending_tag) if next_pending_tag else None,
+        )
+        next_finalize = _fmt_placa_etiqueta(
+            str(next_finalize_plate) if next_finalize_plate else None,
+            str(next_finalize_tag) if next_finalize_tag else None,
+        )
         next_finalize_after = overview.get("next_finalize_after")
 
         # Prioridad: si ya hay una lista para finalizar, esa es la siguiente.
@@ -174,7 +193,8 @@ def cmd_run_loop(_: argparse.Namespace) -> None:
                 siguiente, prox_hora = _siguiente_y_hora(after)
                 ultima_hora = _fmt_hora(after.get("last_at"))
                 ultima = (
-                    f"{after.get('last_plate') or '-'} ({after.get('last_event') or '-'} @ {ultima_hora})"
+                    f"{_fmt_placa_etiqueta(after.get('last_plate'), after.get('last_tag'))} "
+                    f"({after.get('last_event') or '-'} @ {ultima_hora})"
                 )
                 eta = _estimar_fin(after)
 
@@ -247,23 +267,25 @@ def cmd_dequeue(args: argparse.Namespace) -> None:
         )
 
 
-def cmd_status(_: argparse.Namespace) -> None:
+def cmd_status(args: argparse.Namespace) -> None:
     from datetime import datetime
     repository, _ = build_runtime()
-    data = repository.get_status_summary()
+    data = repository.get_status_summary(solo_hoy=args.hoy)
 
     en_cola = data["en_cola"]
     ejecutando = data["ejecutando"]
     con_error = data["con_error"]
 
     print(f"\n{'='*55}")
-    print(f"  ESTADO DE LA COLA  |  {datetime.now().strftime('%H:%M:%S')}")
+    filtro_str = "  (solo hoy)" if args.hoy else ""
+    print(f"  ESTADO DE LA COLA  |  {datetime.now().strftime('%H:%M:%S')}{filtro_str}")
     print(f"{'='*55}")
 
     print(f"\n[EN COLA] ({len(en_cola)} placa(s) esperando solicitar)")
     if en_cola:
         for i, p in enumerate(en_cola, 1):
-            print(f"  {i:>3}. {p['placa']}")
+            etiqueta = p.get("etiqueta") or "-"
+            print(f"  {i:>3}. {p['placa']}  |  Etiqueta: {etiqueta}")
     else:
         print("  (ninguna)")
 
@@ -284,7 +306,11 @@ def cmd_status(_: argparse.Namespace) -> None:
                     timer = "lista para finalizar"
             else:
                 timer = "lista para finalizar"
-            print(f"  - {p['placa']}  |  Orden ANT: {p['numero_orden']}  |  {timer}")
+            etiqueta = p.get("etiqueta") or "-"
+            print(
+                f"  - {p['placa']}  |  Etiqueta: {etiqueta}  |  "
+                f"Orden ANT: {p['numero_orden']}  |  {timer}"
+            )
     else:
         print("  (ninguna)")
 
@@ -292,7 +318,8 @@ def cmd_status(_: argparse.Namespace) -> None:
     if con_error:
         for p in con_error:
             orden_str = p["numero_orden"] or "sin orden ANT"
-            print(f"  ! {p['placa']}  |  {orden_str}")
+            etiqueta = p.get("etiqueta") or "-"
+            print(f"  ! {p['placa']}  |  Etiqueta: {etiqueta}  |  {orden_str}")
     else:
         print("  (ninguna)")
 
@@ -379,13 +406,17 @@ def cmd_help(_: argparse.Namespace) -> None:
 
 3. run-once
    Procesar una placa pendiente (ejecutar una sola vez).
-   Ejemplo: python -m src.main run-once
+    Opciones de modo: llegada | 4en4
+    Ejemplo: python -m src.main run-once --modo 4en4
 
 4. run-loop
    Procesar placas continuamente en loop (Ctrl+C para detener).
    Ágil: solicita hasta 2 órdenes en paralelo y finaliza cuando el timer expire.
    No bloquea la cola mientras espera la finalización.
-   Ejemplo: python -m src.main run-loop
+    Modos de despacho:
+    - llegada: respeta orden FIFO estricto de ingreso
+    - 4en4: reparte por etiqueta en lotes de 4 (round-robin entre etiquetas con cola)
+    Ejemplo: python -m src.main run-loop --modo 4en4
 
 5. cancel --plate <PLACA> [--reason <motivo>]
    Anular orden en ANT (llama al servicio web).
@@ -442,6 +473,7 @@ Archivo de base de datos: auto_rtv.db (SQLite)
 - Maximo 2 solicitudes iniciadas sin finalizar simultaneamente
 - Maximo 3 reintentos por operacion con backoff exponencial
 - Espera aleatoria entre 2.5 y 5.0 minutos antes de finalizar orden
+- En modo 4en4, cada etiqueta despacha 4 placas por turno antes de rotar
 
 [ESTADOS]
 - PENDIENTE_SOLICITUD: Placa en cola para solicitar
@@ -468,9 +500,21 @@ def build_parser() -> argparse.ArgumentParser:
     p_paste.set_defaults(func=cmd_ingest_paste)
 
     p_once = sub.add_parser("run-once", help="Procesar una placa pendiente")
+    p_once.add_argument(
+        "--modo",
+        choices=["llegada", "4en4"],
+        default="llegada",
+        help="Estrategia de despacho: llegada (FIFO) o 4en4 por etiqueta",
+    )
     p_once.set_defaults(func=cmd_run_once)
 
     p_loop = sub.add_parser("run-loop", help="Procesar placas continuamente")
+    p_loop.add_argument(
+        "--modo",
+        choices=["llegada", "4en4"],
+        default="llegada",
+        help="Estrategia de despacho: llegada (FIFO) o 4en4 por etiqueta",
+    )
     p_loop.set_defaults(func=cmd_run_loop)
 
     p_cancel = sub.add_parser("cancel", help="Anular orden de una placa")
@@ -487,6 +531,12 @@ def build_parser() -> argparse.ArgumentParser:
     p_dequeue.set_defaults(func=cmd_dequeue)
 
     p_status = sub.add_parser("status", help="Ver placas en cola y ejecutandose")
+    p_status.add_argument(
+        "--hoy",
+        action="store_true",
+        default=False,
+        help="Mostrar solo placas ingresadas hoy",
+    )
     p_status.set_defaults(func=cmd_status)
 
     p_report = sub.add_parser(

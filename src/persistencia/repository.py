@@ -171,7 +171,7 @@ class Repository:
         with self._lock, self._connect() as conn:
             row = conn.execute(
                 """
-                SELECT id, placa, numero_orden, estado, intentos
+                SELECT id, placa, numero_orden, estado, intentos, etiqueta
                 FROM ordenes
                 WHERE estado = ?
                 ORDER BY id ASC
@@ -187,6 +187,65 @@ class Repository:
                 numero_orden=row["numero_orden"],
                 estado=EstadoOrden(row["estado"]),
                 intentos=row["intentos"],
+                etiqueta=row["etiqueta"],
+            )
+
+    def get_pending_tag_keys(self) -> list[str]:
+        """Retorna las etiquetas pendientes en orden de llegada (min id por etiqueta)."""
+        with self._lock, self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT COALESCE(etiqueta, '') AS tag_key, MIN(id) AS first_id
+                FROM ordenes
+                WHERE estado = ?
+                GROUP BY COALESCE(etiqueta, '')
+                ORDER BY first_id ASC
+                """,
+                (EstadoOrden.PENDIENTE_SOLICITUD.value,),
+            ).fetchall()
+            return [str(row["tag_key"]) for row in rows]
+
+    def get_next_pending_by_tag_key(self, tag_key: str) -> Optional[Orden]:
+        """Obtiene la siguiente pendiente de una etiqueta concreta.
+
+        Usa tag_key='' para placas sin etiqueta.
+        """
+        with self._lock, self._connect() as conn:
+            if tag_key == "":
+                row = conn.execute(
+                    """
+                    SELECT id, placa, numero_orden, estado, intentos, etiqueta
+                    FROM ordenes
+                    WHERE estado = ?
+                      AND (etiqueta IS NULL OR etiqueta = '')
+                    ORDER BY id ASC
+                    LIMIT 1
+                    """,
+                    (EstadoOrden.PENDIENTE_SOLICITUD.value,),
+                ).fetchone()
+            else:
+                row = conn.execute(
+                    """
+                    SELECT id, placa, numero_orden, estado, intentos, etiqueta
+                    FROM ordenes
+                    WHERE estado = ?
+                      AND etiqueta = ?
+                    ORDER BY id ASC
+                    LIMIT 1
+                    """,
+                    (EstadoOrden.PENDIENTE_SOLICITUD.value, tag_key),
+                ).fetchone()
+
+            if not row:
+                return None
+
+            return Orden(
+                id=row["id"],
+                placa=row["placa"],
+                numero_orden=row["numero_orden"],
+                estado=EstadoOrden(row["estado"]),
+                intentos=row["intentos"],
+                etiqueta=row["etiqueta"],
             )
 
     def get_orden_lista_para_finalizar(self) -> Optional[Orden]:
@@ -195,7 +254,7 @@ class Repository:
         with self._lock, self._connect() as conn:
             row = conn.execute(
                 """
-                SELECT id, placa, numero_orden, estado, intentos
+                                SELECT id, placa, numero_orden, estado, intentos, etiqueta
                 FROM ordenes
                 WHERE estado = ?
                   AND (finalizar_after IS NULL OR finalizar_after <= ?)
@@ -212,6 +271,7 @@ class Repository:
                 numero_orden=row["numero_orden"],
                 estado=EstadoOrden(row["estado"]),
                 intentos=row["intentos"],
+                etiqueta=row["etiqueta"],
             )
 
     def count_pending(self) -> int:
@@ -280,7 +340,7 @@ class Repository:
 
             next_pending = conn.execute(
                 """
-                SELECT placa
+                SELECT placa, etiqueta
                 FROM ordenes
                 WHERE estado = ?
                 ORDER BY id ASC
@@ -291,7 +351,7 @@ class Repository:
 
             next_finalize = conn.execute(
                 """
-                SELECT placa, numero_orden, finalizar_after
+                SELECT placa, numero_orden, finalizar_after, etiqueta
                 FROM ordenes
                 WHERE estado = ?
                 ORDER BY CASE WHEN finalizar_after IS NULL THEN 0 ELSE 1 END, finalizar_after ASC
@@ -302,7 +362,7 @@ class Repository:
 
             last_processed = conn.execute(
                 """
-                SELECT o.placa, a.evento, a.created_at
+                SELECT o.placa, o.etiqueta, a.evento, a.created_at
                 FROM auditoria a
                 LEFT JOIN ordenes o ON o.id = a.orden_id
                 WHERE a.evento IN ('SOLICITAR_OK', 'FINALIZAR_OK', 'PROCESS_ERROR')
@@ -317,10 +377,13 @@ class Repository:
             "error_count": int(error_row["total"]) if error_row else 0,
             "finished_count": int(finished_row["total"]) if finished_row else 0,
             "next_pending_plate": next_pending["placa"] if next_pending else None,
+            "next_pending_tag": next_pending["etiqueta"] if next_pending else None,
             "next_finalize_plate": next_finalize["placa"] if next_finalize else None,
             "next_finalize_order": next_finalize["numero_orden"] if next_finalize else None,
             "next_finalize_after": next_finalize["finalizar_after"] if next_finalize else None,
+            "next_finalize_tag": next_finalize["etiqueta"] if next_finalize else None,
             "last_plate": last_processed["placa"] if last_processed else None,
+            "last_tag": last_processed["etiqueta"] if last_processed else None,
             "last_event": last_processed["evento"] if last_processed else None,
             "last_at": last_processed["created_at"] if last_processed else None,
         }
@@ -329,7 +392,7 @@ class Repository:
         with self._lock, self._connect() as conn:
             row = conn.execute(
                 """
-                SELECT id, placa, numero_orden, estado, intentos
+                                SELECT id, placa, numero_orden, estado, intentos, etiqueta
                 FROM ordenes
                 WHERE placa = ?
                   AND estado IN (?, ?)
@@ -346,6 +409,7 @@ class Repository:
                 numero_orden=row["numero_orden"],
                 estado=EstadoOrden(row["estado"]),
                 intentos=row["intentos"],
+                etiqueta=row["etiqueta"],
             )
 
     def mark_solicitada(self, orden_id: int, numero_orden: str, finalizar_after: str) -> None:
@@ -428,16 +492,20 @@ class Repository:
             conn.commit()
             self._sync_orders(conn, [orden_id])
 
-    def get_status_summary(self) -> dict:
+    def get_status_summary(self, solo_hoy: bool = False) -> dict:
         """Retorna un resumen de todas las placas activas: en cola y en ejecución."""
         now = datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
+        hoy_inicio = datetime.now(timezone.utc).replace(
+            hour=0, minute=0, second=0, microsecond=0, tzinfo=None
+        ).isoformat()
+        fecha_filter = f" AND created_at >= '{hoy_inicio}'" if solo_hoy else ""
         with self._lock, self._connect() as conn:
             # Pendientes de solicitar
             en_cola = conn.execute(
-                """
-                SELECT placa, created_at
+                f"""
+                SELECT placa, etiqueta, created_at
                 FROM ordenes
-                WHERE estado = ?
+                WHERE estado = ?{fecha_filter}
                 ORDER BY id ASC
                 """,
                 (EstadoOrden.PENDIENTE_SOLICITUD.value,),
@@ -445,10 +513,10 @@ class Repository:
 
             # Solicitadas esperando finalizar
             ejecutando = conn.execute(
-                """
-                SELECT placa, numero_orden, finalizar_after
+                f"""
+                SELECT placa, etiqueta, numero_orden, finalizar_after
                 FROM ordenes
-                WHERE estado = ?
+                WHERE estado = ?{fecha_filter}
                 ORDER BY finalizar_after ASC
                 """,
                 (EstadoOrden.SOLICITADA.value,),
@@ -456,27 +524,34 @@ class Repository:
 
             # Con error
             con_error = conn.execute(
-                """
-                SELECT placa, numero_orden
+                f"""
+                SELECT placa, etiqueta, numero_orden
                 FROM ordenes
-                WHERE estado = ?
+                WHERE estado = ?{fecha_filter}
                 ORDER BY updated_at DESC
                 """,
                 (EstadoOrden.ERROR.value,),
             ).fetchall()
 
         return {
-            "en_cola": [{"placa": r["placa"], "created_at": r["created_at"]} for r in en_cola],
+            "en_cola": [
+                {"placa": r["placa"], "etiqueta": r["etiqueta"], "created_at": r["created_at"]}
+                for r in en_cola
+            ],
             "ejecutando": [
                 {
                     "placa": r["placa"],
+                    "etiqueta": r["etiqueta"],
                     "numero_orden": r["numero_orden"],
                     "finalizar_after": r["finalizar_after"],
                     "lista": (r["finalizar_after"] or "") <= now,
                 }
                 for r in ejecutando
             ],
-            "con_error": [{"placa": r["placa"], "numero_orden": r["numero_orden"]} for r in con_error],
+            "con_error": [
+                {"placa": r["placa"], "etiqueta": r["etiqueta"], "numero_orden": r["numero_orden"]}
+                for r in con_error
+            ],
         }
 
     def dequeue_plate(self, placa: str) -> bool:

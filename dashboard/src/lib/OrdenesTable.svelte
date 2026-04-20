@@ -3,6 +3,7 @@
 	
 	export let ordenes: any[] = [];
 	export let isMonitor: boolean = false;
+	export let isDigitador: boolean = false;
 
 	// Configuración de temas con colores CSS fijos (independientes de Tailwind)
 	const themeMap: Record<string, { badge: string, border: string, bg: string, text: string }> = {
@@ -40,9 +41,24 @@
 
 	function formatDate(date: string) {
 		try {
-			const d = new Date(date);
-			return d.toLocaleDateString('es-ES', { month: 'short', day: 'numeric' }) + 
-				   ' ' + d.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' });
+			const raw = (date || '').trim();
+			if (!raw) return '-';
+			const hasTimezone = /([zZ]|[+\-]\d{2}:\d{2})$/.test(raw);
+			const normalized = hasTimezone ? raw : `${raw}Z`;
+			const d = new Date(normalized);
+			if (Number.isNaN(d.getTime())) return '-';
+			const datePart = d.toLocaleDateString('es-ES', {
+				month: 'short',
+				day: 'numeric',
+				timeZone: 'America/Bogota'
+			});
+			const timePart = d.toLocaleTimeString('es-ES', {
+				hour: '2-digit',
+				minute: '2-digit',
+				timeZone: 'America/Bogota',
+				hour12: false
+			});
+			return `${datePart} ${timePart}`;
 		} catch (e) {
 			return '-';
 		}
@@ -101,6 +117,7 @@
 				<tr>
 					<th class="px-6 py-5 text-left text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">Vehículo</th>
 					{#if !isMonitor}<th class="px-6 py-5 text-left text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">Orden</th>{/if}
+					{#if isDigitador}<th class="px-6 py-5 text-left text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">Etiqueta</th>{/if}
 					<th class="px-6 py-5 text-left text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">Estado</th>
 					<th class="px-6 py-5 text-left text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">Actualizado</th>
 				</tr>
@@ -117,6 +134,9 @@
 						</td>
 						{#if !isMonitor}
 							<td class="px-6 py-4 text-sm font-bold text-slate-600">{orden.numero_orden || '-'}</td>
+						{/if}
+						{#if isDigitador}
+							<td class="px-6 py-4 text-xs font-black text-slate-500 uppercase tracking-widest">{orden.etiqueta || '-'}</td>
 						{/if}
 						<td class="px-6 py-4">
 							<span 
