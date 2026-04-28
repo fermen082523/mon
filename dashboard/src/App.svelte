@@ -1,8 +1,10 @@
 <script>
   import { onMount } from 'svelte';
+  import { fade, slide, fly } from 'svelte/transition';
   import { supabase } from './lib/supabase';
   import StatCard from './lib/StatCard.svelte';
   import OrdenesTable from './lib/OrdenesTable.svelte';
+  import PieChart from './lib/PieChart.svelte';
 
   const SESSION_KEY = 'monitor_dashboard_user';
   const PAGE_SIZE = 25;
@@ -27,10 +29,15 @@
   let loadingSearch = false;
 
   let filtroEstado = 'TODAS';
+  let filtroEtiqueta = '';
+  let fechaFiltro = '';
+  let etiquetasDisponibles = [];
   let searchPlateInput = '';
   let activeSearchPlate = '';
   let searchDebounceTimer = null;
 
+  let chartData = [];
+  let statsExtra = { entrante: 0, finalizadas: 0 };
   let monitorOwnCount = 0;
   let monitorOthersCount = 0;
   let totalHoy = 0;
@@ -92,20 +99,44 @@
     );
   }
 
+  function fechaHoyGmt5() {
+    // Devuelve "YYYY-MM-DD" en hora GMT-5
+    const offsetMs = 5 * 60 * 60 * 1000;
+    return new Date(Date.now() - offsetMs).toISOString().slice(0, 10);
+  }
+
+  function diaInicioUTC(fechaGmt5) {
+    // Medianoche GMT-5 = 05:00 UTC del mismo día
+    const [y, m, d] = fechaGmt5.split('-').map(Number);
+    return new Date(Date.UTC(y, m - 1, d, 5, 0, 0));
+  }
+
+  function diaFinUTC(fechaGmt5) {
+    // 23:59:59 GMT-5 = 05:00 UTC del día siguiente
+    const [y, m, d] = fechaGmt5.split('-').map(Number);
+    return new Date(Date.UTC(y, m - 1, d + 1, 5, 0, 0));
+  }
+
   function applyRoleScope(query) {
+    const fecha = fechaFiltro || fechaHoyGmt5();
+
     if (isMonitor()) {
       const tag = normalizeTag(currentUser?.etiqueta);
-      // Inicio del día en GMT-5: medianoche local GMT-5 = 05:00 UTC
-      const ahora = new Date();
-      const offsetMs = 5 * 60 * 60 * 1000; // UTC-5
-      const enGmt5 = new Date(ahora.getTime() - offsetMs);
-      // Trucamos al inicio del día en GMT-5
-      enGmt5.setUTCHours(0, 0, 0, 0);
-      // Convertimos de vuelta a UTC para la query (supabase almacena en UTC)
-      const hoyInicioUTC = new Date(enGmt5.getTime() + offsetMs);
       return query
         .eq('etiqueta', tag)
-        .gte('created_at', hoyInicioUTC.toISOString());
+        .gte('created_at', diaInicioUTC(fecha).toISOString())
+        .lt('created_at', diaFinUTC(fecha).toISOString());
+    }
+    if (isDigitador()) {
+      return query
+        .gte('created_at', diaInicioUTC(fecha).toISOString())
+        .lt('created_at', diaFinUTC(fecha).toISOString());
+    }
+    // Operador: filtra por fecha solo si hay selección
+    if (fechaFiltro) {
+      return query
+        .gte('created_at', diaInicioUTC(fechaFiltro).toISOString())
+        .lt('created_at', diaFinUTC(fechaFiltro).toISOString());
     }
     return query;
   }
@@ -144,12 +175,15 @@
 
     let query = supabase
       .from('rtv_ordenes')
-      .select('local_id, placa, numero_orden, estado, etiqueta, updated_at', { count: 'exact' });
+      .select('local_id, placa, numero_orden, estado, etiqueta, intentos, updated_at', { count: 'exact' });
 
     query = applyRoleScope(query);
     query = applySearchScope(query);
     if (filtroEstado !== 'TODAS') {
       query = query.eq('estado', filtroEstado);
+    }
+    if (isDigitador() && filtroEtiqueta) {
+      query = query.eq('etiqueta', filtroEtiqueta);
     }
 
     const from = (targetPage - 1) * PAGE_SIZE;
@@ -160,7 +194,56 @@
       .range(from, to);
 
     if (!error) {
-      ordenes = data ?? [];
+      const ordenesData = data ?? [];
+      const platesInPage = [...new Set(ordenesData.map(o => o.placa))];
+      const fecha = fechaFiltro || fechaHoyGmt5();
+
+      // Buscamos TODOS los estados de estas placas para hoy (cruce de datos)
+      const { data: siblingData } = await supabase
+        .from('rtv_ordenes')
+        .select('placa, estado')
+        .in('placa', platesInPage)
+        .gte('created_at', diaInicioUTC(fecha).toISOString())
+        .lt('created_at', diaFinUTC(fecha).toISOString());
+
+      const plateMatrix = (siblingData || []).reduce((acc, row) => {
+        if (!acc[row.placa]) acc[row.placa] = { finalizada: false, error: false };
+        if (row.estado === 'FINALIZADA') acc[row.placa].finalizada = true;
+        if (row.estado === 'ERROR') acc[row.placa].error = true;
+        return acc;
+      }, {});
+
+      // Obtener historial de auditoria
+      const allIds = ordenesData.map(o => o.local_id);
+      const auditoriaMap = {};
+      if (allIds.length > 0) {
+        const { data: audData } = await supabase
+          .from('rtv_auditoria')
+          .select('orden_local_id, error, evento')
+          .in('orden_local_id', allIds)
+          .or('error.not.is.null,evento.ilike.%RETRY%,evento.ilike.%ERROR%');
+
+        for (const row of (audData || [])) {
+          if (!auditoriaMap[row.orden_local_id]) {
+            auditoriaMap[row.orden_local_id] = row.error || `Aviso: ${row.evento}`;
+          }
+        }
+      }
+
+      ordenes = ordenesData.map(o => {
+        const matrix = plateMatrix[o.placa] || {};
+        // Se considera resuelta si esta misma placa tiene OTRA fila que terminó en FINALIZADA hoy
+        const resueltaEnOtraFila = o.estado === 'ERROR' && matrix.finalizada;
+        // Fallos previos en esta misma fila o en otras de la misma placa
+        const fallosPrevios = o.intentos > 0 || !!auditoriaMap[o.local_id] || matrix.error;
+        
+        return {
+          ...o,
+          ultimo_error: auditoriaMap[o.local_id] || null,
+          resuelta_externamente: resueltaEnOtraFila,
+          tuvo_error: (o.estado === 'FINALIZADA' && fallosPrevios)
+        };
+      });
       totalItems = count ?? 0;
       totalPages = Math.max(1, Math.ceil(totalItems / PAGE_SIZE));
       page = Math.min(Math.max(1, targetPage), totalPages);
@@ -250,18 +333,50 @@
   }
 
   async function loadTotalHoy() {
-    const ahora = new Date();
-    const offsetMs = 5 * 60 * 60 * 1000; // UTC-5 (Colombia)
-    const enGmt5 = new Date(ahora.getTime() - offsetMs);
-    enGmt5.setUTCHours(0, 0, 0, 0);
-    const hoyInicioUTC = new Date(enGmt5.getTime() + offsetMs);
-
+    const fecha = fechaFiltro || fechaHoyGmt5();
     const { count } = await supabase
       .from('rtv_ordenes')
       .select('local_id', { count: 'exact', head: true })
-      .gte('created_at', hoyInicioUTC.toISOString());
-
+      .gte('created_at', diaInicioUTC(fecha).toISOString())
+      .lt('created_at', diaFinUTC(fecha).toISOString());
     totalHoy = count ?? 0;
+  }
+
+  async function loadChartData() {
+    if (!isDigitador()) return;
+    const fecha = fechaFiltro || fechaHoyGmt5();
+
+    const { data, error } = await supabase
+      .from('rtv_ordenes')
+      .select('etiqueta')
+      .eq('estado', 'FINALIZADA')
+      .gte('updated_at', diaInicioUTC(fecha).toISOString())
+      .lt('updated_at', diaFinUTC(fecha).toISOString());
+
+    if (!error && data) {
+      const counts = data.reduce((acc, row) => {
+        const t = (row.etiqueta || 'sin etiqueta').toLowerCase();
+        acc[t] = (acc[t] || 0) + 1;
+        return acc;
+      }, {});
+
+      chartData = Object.entries(counts)
+        .map(([label, value]) => ({ label, value }))
+        .sort((a, b) => b.value - a.value);
+    } else {
+      chartData = [];
+    }
+  }
+
+  async function loadEtiquetas() {
+    if (!isDigitador()) return;
+    const { data } = await supabase
+      .from('app_users')
+      .select('etiqueta')
+      .in('role', ['monitor', 'digitador'])
+      .not('etiqueta', 'is', null)
+      .order('etiqueta', { ascending: true });
+    etiquetasDisponibles = [...new Set((data || []).map(r => r.etiqueta).filter(Boolean))];
   }
 
   async function refreshDashboard(targetPage = page) {
@@ -269,9 +384,11 @@
       loadOrdenes(targetPage),
       loadStats(),
       loadGlobalStats(),
+      loadChartData(),
       loadColaActiva(),
       loadMonitorCounters(),
       loadTotalHoy(),
+      loadEtiquetas(),
     ]);
   }
 
@@ -356,6 +473,7 @@
     localStorage.setItem(SESSION_KEY, JSON.stringify(currentUser));
     username = '';
     password = '';
+    fechaFiltro = fechaHoyGmt5();
 
     await refreshDashboard(1);
     await loadUsers();
@@ -466,8 +584,8 @@
       return;
     }
 
-    if (r === 'monitor' && !/^[a-z]{2}$/.test(tag)) {
-      userActionReport = 'El monitor requiere etiqueta de 2 letras.';
+    if ((r === 'monitor' || r === 'digitador') && !/^[a-z]{2}$/.test(tag)) {
+      userActionReport = 'El monitor y digitador requieren etiqueta de 2 letras.';
       return;
     }
 
@@ -475,7 +593,7 @@
       username: u,
       password: await hashPassword(p),
       role: r,
-      etiqueta: r === 'monitor' ? tag : null,
+      etiqueta: (r === 'monitor' || r === 'digitador') ? tag : null,
       active: true,
     };
 
@@ -624,6 +742,7 @@
     }
 
     if (currentUser) {
+      fechaFiltro = fechaHoyGmt5();
       await refreshDashboard(1);
       await loadUsers();
     }
@@ -683,18 +802,27 @@
     </div>
 
     <!-- Header App Style -->
-    <header class="sticky top-0 z-[60] bg-white/80 backdrop-blur-xl border-b border-slate-100">
-      <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-14 md:h-16 flex items-center justify-between">
-        <div class="flex items-center gap-3">
-          <div class="h-8 w-8 bg-gradient-to-br from-indigo-600 to-violet-700 rounded-xl flex items-center justify-center text-white font-black shadow-md shadow-indigo-200">
-            M
+    <header class="sticky top-0 z-[60] bg-white/90 backdrop-blur-xl border-b border-slate-100 safe-top">
+      <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
+        <div class="flex items-center gap-4">
+          <div class="h-10 w-10 bg-gradient-to-br from-indigo-600 to-violet-700 rounded-2xl flex items-center justify-center text-white font-black shadow-lg shadow-indigo-200/50 transition-transform active:scale-90">
+            R
           </div>
           <div>
-            <h1 class="text-sm md:text-base font-black text-slate-900 tracking-tight leading-none">RTV Live</h1>
-            <p class="text-[9px] md:text-[10px] font-black text-slate-400 uppercase tracking-widest mt-0.5">{roleLabel(currentUser.role)}</p>
+            <h1 class="text-base font-black text-slate-900 tracking-tight leading-none">RTV <span class="text-indigo-600">LIVE</span></h1>
+            <div class="flex items-center gap-1.5 mt-1">
+              <div class="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse"></div>
+              <p class="text-[9px] font-black text-slate-400 uppercase tracking-[0.2em]">{roleLabel(currentUser.role)}</p>
+            </div>
           </div>
         </div>
         <div class="flex items-center gap-3">
+          <div class="hidden sm:flex items-center gap-2 px-3 py-1.5 bg-slate-50 rounded-xl border border-slate-100">
+            {#if currentUser.etiqueta}
+              <span class="px-1.5 py-0.5 bg-indigo-100 rounded text-[9px] font-black text-indigo-600 uppercase tracking-widest">{currentUser.etiqueta}</span>
+            {/if}
+            <span class="text-xs font-black text-slate-700">{currentUser.username}</span>
+          </div>
           <button on:click={toggleChangePasswordPanel} class="p-2 text-slate-400 hover:text-indigo-600 bg-slate-50 hover:bg-indigo-50 rounded-xl transition-colors">
             <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" /><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
           </button>
@@ -774,27 +902,64 @@
       {/if}
 
       <!-- Total del día - visible para todos los roles -->
-      <div class="flex items-center gap-5 bg-white rounded-[2rem] border border-slate-100 shadow-sm px-6 py-5 overflow-hidden relative">
-        <div class="absolute right-0 top-0 h-full w-32 bg-gradient-to-l from-emerald-50 to-transparent pointer-events-none"></div>
-        <div class="h-12 w-12 shrink-0 bg-gradient-to-br from-emerald-500 to-teal-600 rounded-2xl flex items-center justify-center shadow-lg shadow-emerald-200/60">
-          <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+      <div in:fly={{ y: 20, duration: 500 }} class="flex items-center gap-6 bg-white rounded-[2.5rem] border-2 border-slate-200 shadow-md px-7 py-6 overflow-hidden relative group transition-all hover:shadow-lg">
+        <div class="absolute right-0 top-0 h-full w-48 bg-gradient-to-l from-emerald-50/50 to-transparent pointer-events-none group-hover:w-64 transition-all duration-700"></div>
+        <div class="h-14 w-14 shrink-0 bg-gradient-to-br from-emerald-500 to-teal-600 rounded-[1.25rem] flex items-center justify-center shadow-lg shadow-emerald-200/60 group-hover:scale-110 transition-transform duration-500">
+          <svg xmlns="http://www.w3.org/2000/svg" class="h-7 w-7 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
           </svg>
         </div>
-        <div>
-          <p class="text-[10px] font-black uppercase tracking-[0.3em] text-slate-400">Órdenes Hoy</p>
-          <p class="text-4xl md:text-5xl font-black text-slate-900 tracking-tighter leading-none">{totalHoy}</p>
+        <div class="relative z-10">
+          <p class="text-[10px] font-black uppercase tracking-[0.3em] text-slate-400 mb-0.5">
+            {fechaFiltro && fechaFiltro !== fechaHoyGmt5() ? `Órdenes ${fechaFiltro}` : 'GESTIÓN DIARIA'}
+          </p>
+          <div class="flex items-baseline gap-2">
+            <p class="text-5xl md:text-6xl font-black text-slate-900 tracking-tighter leading-none">{totalHoy}</p>
+            <span class="text-xs font-black text-emerald-500 uppercase tracking-widest">Placas</span>
+          </div>
         </div>
       </div>
 
-      <!-- Main Statistics Row -->
-      {#if !isDigitador()}
-        <div class="grid grid-cols-2 md:grid-cols-5 gap-3">
-          <StatCard label="En Cola" value={stats.pendiente} estado="pendiente" color="blue" />
-          <StatCard label="Solicitadas" value={stats.solicitada} estado="solicitada" color="yellow" />
-          <StatCard label="Finalizadas" value={stats.finalizada} estado="finalizada" color="green" />
-          <StatCard label="Errores" value={stats.error} estado="error" color="red" />
-          <StatCard label="Anuladas" value={stats.anulada} estado="anulada" color="purple" />
+      <!-- Main Statistics Row (Visible for everyone) -->
+      <div in:fly={{ y: 20, duration: 500, delay: 100 }} class="grid grid-cols-2 md:grid-cols-5 gap-3 md:gap-4">
+        <StatCard label="En Cola" value={stats.pendiente} estado="pendiente" color="blue" active={filtroEstado === 'PENDIENTE_SOLICITUD'} on:click={async () => { filtroEstado = (filtroEstado === 'PENDIENTE_SOLICITUD' ? 'TODAS' : 'PENDIENTE_SOLICITUD'); await refreshDashboard(1); }} />
+        <StatCard label="Solicitadas" value={stats.solicitada} estado="solicitada" color="yellow" active={filtroEstado === 'SOLICITADA'} on:click={async () => { filtroEstado = (filtroEstado === 'SOLICITADA' ? 'TODAS' : 'SOLICITADA'); await refreshDashboard(1); }} />
+        <StatCard label="Finalizadas" value={stats.finalizada} estado="finalizada" color="green" active={filtroEstado === 'FINALIZADA'} on:click={async () => { filtroEstado = (filtroEstado === 'FINALIZADA' ? 'TODAS' : 'FINALIZADA'); await refreshDashboard(1); }} />
+        <StatCard label="Errores" value={stats.error} estado="error" color="red" active={filtroEstado === 'ERROR'} on:click={async () => { filtroEstado = (filtroEstado === 'ERROR' ? 'TODAS' : 'ERROR'); await refreshDashboard(1); }} />
+        <StatCard label="Anuladas" value={stats.anulada} estado="anulada" color="purple" active={filtroEstado === 'ANULADA'} on:click={async () => { filtroEstado = (filtroEstado === 'ANULADA' ? 'TODAS' : 'ANULADA'); await refreshDashboard(1); }} />
+      </div>
+
+      {#if isDigitador()}
+        <div class="grid grid-cols-1 md:grid-cols-12 gap-4 items-stretch">
+          <!-- Metrics Sidebar (Top on Mobile, Right on Desktop) -->
+          <div class="md:col-span-5 lg:col-span-3 order-1 md:order-2 grid grid-cols-2 md:grid-cols-1 gap-4 items-stretch">
+            <!-- Metric 1: Incoming Traffic -->
+            <div class="bg-white p-5 md:p-8 rounded-[2rem] border-2 border-slate-200 flex flex-col items-center justify-center text-center shadow-md relative overflow-hidden group h-full transition-all hover:shadow-lg">
+               <div class="absolute top-0 right-0 p-2 opacity-[0.03] group-hover:opacity-10 transition-opacity">
+                 <svg xmlns="http://www.w3.org/2000/svg" class="h-16 w-16 text-indigo-600" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M12 4v16m8-8H4" /></svg>
+               </div>
+               <p class="text-[9px] md:text-[10px] font-black uppercase tracking-[0.2em] text-slate-400 mb-3">Entrante</p>
+               <p class="text-3xl md:text-5xl font-black text-indigo-600 leading-none">{statsExtra.entrante}</p>
+               <p class="text-[8px] font-black text-slate-300 uppercase mt-3 tracking-widest">Placas / 60m</p>
+            </div>
+
+            <!-- Metric 2: Speed / Velocity -->
+            <div class="bg-white p-5 md:p-8 rounded-[2rem] border-2 border-slate-200 flex flex-col items-center justify-center text-center shadow-md relative overflow-hidden group h-full transition-all hover:shadow-lg">
+               <div class="absolute top-0 right-0 p-2 opacity-[0.03] group-hover:opacity-10 transition-opacity">
+                 <svg xmlns="http://www.w3.org/2000/svg" class="h-16 w-16 text-slate-900" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>
+               </div>
+               <p class="text-[9px] md:text-[10px] font-black uppercase tracking-[0.2em] text-slate-400 mb-3">Frecuencia</p>
+               <p class="text-3xl md:text-5xl font-black text-slate-900 leading-none">{statsExtra.finalizadas}</p>
+               <p class="text-[8px] font-black text-emerald-500 uppercase mt-3 tracking-widest">Finalizadas / 60m</p>
+            </div>
+          </div>
+
+          <!-- Main Chart (Left/Center on Desktop) -->
+          <div class="md:col-span-7 lg:col-span-9 order-2 md:order-1 h-full shadow-md rounded-[2.5rem]">
+            {#if chartData.length > 0}
+              <PieChart data={chartData} />
+            {/if}
+          </div>
         </div>
       {/if}
 
@@ -813,36 +978,51 @@
                 </button>
               {/if}
             </div>
+
+            <!-- Selector de fecha -->
+            <div class="relative flex items-center">
+              <input
+                type="date"
+                bind:value={fechaFiltro}
+                max={fechaHoyGmt5()}
+                on:change={async () => await refreshDashboard(1)}
+                class="h-[52px] px-3 bg-white border-2 border-slate-100 rounded-[1.5rem] text-xs font-black text-slate-700 focus:outline-none focus:border-indigo-500 transition-all shadow-sm cursor-pointer"
+              />
+              {#if fechaFiltro !== fechaHoyGmt5()}
+                <button
+                  on:click={async () => { fechaFiltro = fechaHoyGmt5(); await refreshDashboard(1); }}
+                  class="absolute -top-1.5 -right-1.5 h-5 w-5 bg-indigo-600 text-white rounded-full text-[9px] font-black flex items-center justify-center shadow"
+                  title="Volver a hoy"
+                >H</button>
+              {/if}
+            </div>
+
             <button on:click={() => refreshDashboard(page)} class="h-[52px] w-[52px] shrink-0 bg-white border-2 border-slate-100 rounded-[1.5rem] flex items-center justify-center text-indigo-600 shadow-sm active:scale-90 transition-all">
               <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>
             </button>
           </div>
 
-          <!-- Colorized Filter Tabs -->
-          <div class="flex overflow-x-auto no-scrollbar gap-2 pb-1">
-            {#each [
-              { id: 'TODAS', label: 'Todos', color: '#64748b' },
-              { id: 'PENDIENTE_SOLICITUD', label: 'En Cola', color: '#4f46e5' },
-              { id: 'SOLICITADA', label: 'Solicitadas', color: '#f59e0b' },
-              { id: 'FINALIZADA', label: 'Finalizadas', color: '#10b981' },
-              { id: 'ERROR', label: 'Errores', color: '#ef4444' },
-              { id: 'ANULADA', label: 'Anuladas', color: '#64748b' }
-            ] as f}
+          <!-- Etiqueta Filter (solo digitador) -->
+          {#if isDigitador() && etiquetasDisponibles.length > 0}
+            <div class="flex overflow-x-auto no-scrollbar gap-2">
               <button
-                on:click={async () => { filtroEstado = f.id; await refreshDashboard(1); }}
-                class="whitespace-nowrap px-5 py-2.5 rounded-2xl text-[10px] font-black uppercase tracking-[0.2em] transition-all border-2 active:scale-90"
-                style="
-                  background-color: {filtroEstado === f.id ? f.color : 'white'};
-                  color: {filtroEstado === f.id ? 'white' : f.color};
-                  border-color: {f.color};
-                  box-shadow: {filtroEstado === f.id ? `0 10px 20px -5px ${f.color}66` : 'none'};
-                  opacity: {filtroEstado === f.id ? '1' : '0.6'};
-                "
+                on:click={async () => { filtroEtiqueta = ''; await refreshDashboard(1); }}
+                class="whitespace-nowrap px-4 py-2 rounded-2xl text-[10px] font-black uppercase tracking-[0.2em] transition-all border-2 active:scale-90"
+                style="background-color: {filtroEtiqueta === '' ? '#0f172a' : 'white'}; color: {filtroEtiqueta === '' ? 'white' : '#0f172a'}; border-color: #0f172a;"
               >
-                {f.label}
+                Todas
               </button>
-            {/each}
-          </div>
+              {#each etiquetasDisponibles as etq}
+                <button
+                  on:click={async () => { filtroEtiqueta = etq; await refreshDashboard(1); }}
+                  class="whitespace-nowrap px-4 py-2 rounded-2xl text-[10px] font-black uppercase tracking-[0.2em] transition-all border-2 active:scale-90"
+                  style="background-color: {filtroEtiqueta === etq ? '#6366f1' : 'white'}; color: {filtroEtiqueta === etq ? 'white' : '#6366f1'}; border-color: #6366f1;"
+                >
+                  {etq}
+                </button>
+              {/each}
+            </div>
+          {/if}
         </div>
       </div>
 

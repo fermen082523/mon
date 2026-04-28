@@ -1,11 +1,15 @@
 <script lang="ts">
 	import { tweened } from 'svelte/motion';
 	import { cubicOut } from 'svelte/easing';
+	import { createEventDispatcher } from 'svelte';
+
+	const dispatch = createEventDispatcher();
 
 	export let label: string;
 	export let value: number;
 	export let estado: string;
 	export let color: string = 'blue';
+	export let active: boolean = false;
 
 	const displayedValue = tweened(0, {
 		duration: 600,
@@ -14,72 +18,75 @@
 
 	$: displayedValue.set(value);
 
-	// Colores ultra-vibrantes con degradados
-	const themeMap: Record<string, { bg: string, text: string, iconBg: string, shadow: string }> = {
+	const themeMap: Record<string, { activeBg: string, inactiveBg: string, activeText: string, inactiveText: string, borderColor: string, shadow: string }> = {
 		blue: {
-			bg: 'linear-gradient(135deg, #4f46e5 0%, #3b82f6 100%)',
-			text: '#ffffff',
-			iconBg: 'rgba(255, 255, 255, 0.2)',
-			shadow: '0 10px 25px -5px rgba(59, 130, 246, 0.5)'
+			activeBg: '#4f46e5',
+			inactiveBg: '#ffffff',
+			activeText: '#ffffff',
+			inactiveText: '#4f46e5',
+			borderColor: '#cbd5e1',
+			shadow: '0 20px 25px -5px rgba(79, 70, 229, 0.4)'
 		},
 		green: {
-			bg: 'linear-gradient(135deg, #059669 0%, #10b981 100%)',
-			text: '#ffffff',
-			iconBg: 'rgba(255, 255, 255, 0.2)',
-			shadow: '0 10px 25px -5px rgba(16, 185, 129, 0.5)'
+			activeBg: '#059669',
+			inactiveBg: '#ffffff',
+			activeText: '#ffffff',
+			inactiveText: '#059669',
+			borderColor: '#cbd5e1',
+			shadow: '0 20px 25px -5px rgba(5, 150, 105, 0.4)'
 		},
 		yellow: {
-			bg: 'linear-gradient(135deg, #d97706 0%, #f59e0b 100%)',
-			text: '#ffffff',
-			iconBg: 'rgba(255, 255, 255, 0.2)',
-			shadow: '0 10px 25px -5px rgba(245, 158, 11, 0.5)'
+			activeBg: '#d97706',
+			inactiveBg: '#ffffff',
+			activeText: '#ffffff',
+			inactiveText: '#d97706',
+			borderColor: '#cbd5e1',
+			shadow: '0 20px 25px -5px rgba(217, 119, 6, 0.4)'
 		},
 		red: {
-			bg: 'linear-gradient(135deg, #dc2626 0%, #ef4444 100%)',
-			text: '#ffffff',
-			iconBg: 'rgba(255, 255, 255, 0.2)',
-			shadow: '0 10px 25px -5px rgba(239, 68, 68, 0.5)'
+			activeBg: '#dc2626',
+			inactiveBg: '#ffffff',
+			activeText: '#ffffff',
+			inactiveText: '#dc2626',
+			borderColor: '#cbd5e1',
+			shadow: '0 20px 25px -5px rgba(220, 38, 38, 0.4)'
 		},
 		purple: {
-			bg: 'linear-gradient(135deg, #7c3aed 0%, #8b5cf6 100%)',
-			text: '#ffffff',
-			iconBg: 'rgba(255, 255, 255, 0.2)',
-			shadow: '0 10px 25px -5px rgba(139, 92, 246, 0.5)'
+			activeBg: '#7c3aed',
+			inactiveBg: '#ffffff',
+			activeText: '#ffffff',
+			inactiveText: '#7c3aed',
+			borderColor: '#cbd5e1',
+			shadow: '0 20px 25px -5px rgba(124, 58, 237, 0.4)'
 		}
 	};
 
-	const theme = themeMap[color] || themeMap.blue;
-
-	const iconMap: Record<string, string> = {
-		pendiente: '⏳',
-		solicitada: '📋',
-		finalizada: '✅',
-		error: '❌',
-		anulada: '🚫',
-	};
+	$: theme = themeMap[color] || themeMap.blue;
 </script>
 
-<div 
-	class="p-4 md:p-6 rounded-[2rem] transition-all duration-500 group overflow-hidden relative border border-white/10 active:scale-95"
-	style="background: {theme.bg}; color: {theme.text}; box-shadow: {theme.shadow};"
+<button 
+	on:click={() => dispatch('click')}
+	class="w-full text-left p-4 md:p-5 rounded-3xl transition-all duration-300 group relative border-2 active:scale-95 flex flex-col justify-between h-full min-h-[100px] md:min-h-[120px] shadow-sm hover:shadow-md"
+	style="
+		background-color: {active ? theme.activeBg : theme.inactiveBg}; 
+		color: {active ? theme.activeText : theme.inactiveText}; 
+		border-color: {active ? theme.activeBg : theme.borderColor};
+		box-shadow: {active ? theme.shadow : ''};
+	"
 >
-	<!-- Shine effect -->
-	<div class="absolute -right-4 -top-4 h-32 w-32 bg-white/20 blur-3xl rounded-full transition-transform group-hover:scale-150 duration-700"></div>
-	
-	<div class="flex items-center justify-between relative z-10">
-		<div class="space-y-1">
-			<p class="text-[9px] md:text-xs font-black uppercase tracking-[0.2em] opacity-90">{label}</p>
-			<div class="flex items-baseline">
-				<p class="text-3xl md:text-5xl font-black tracking-tighter leading-none">
-					{Math.round($displayedValue)}
-				</p>
-			</div>
-		</div>
-		<div 
-			class="h-10 w-10 md:h-16 md:w-16 rounded-2xl md:rounded-3xl backdrop-blur-md flex items-center justify-center text-xl md:text-4xl shadow-inner border border-white/30 transition-all group-hover:scale-110 group-hover:rotate-6 duration-300"
-			style="background: {theme.iconBg};"
-		>
-			{iconMap[estado] || '📊'}
-		</div>
+	<div class="space-y-1">
+		<p class="text-[9px] md:text-[10px] font-black uppercase tracking-[0.2em] {active ? 'opacity-80' : 'text-slate-400'}">
+			{label}
+		</p>
+		<p class="text-3xl md:text-4xl font-black tracking-tighter leading-none">
+			{Math.round($displayedValue)}
+		</p>
 	</div>
-</div>
+	
+	<div class="flex items-center justify-between mt-auto pt-2">
+		<span class="text-[8px] font-bold uppercase tracking-widest {active ? 'opacity-70' : 'text-slate-300'}">
+			{active ? 'Seleccionado' : 'Filtrar'}
+		</span>
+		<div class="h-1.5 w-1.5 rounded-full {active ? 'bg-white' : 'bg-slate-200'}"></div>
+	</div>
+</button>

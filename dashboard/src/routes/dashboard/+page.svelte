@@ -50,7 +50,10 @@
 	async function loadOrdenes() {
 		loading = true;
 		try {
-			let query = supabase.from('rtv_ordenes').select('*').order('updated_at', { ascending: false });
+			let query = supabase
+				.from('rtv_ordenes')
+				.select('*')
+				.order('updated_at', { ascending: false });
 
 			if (filter !== 'todas') {
 				query = query.eq('estado', filter);
@@ -58,13 +61,47 @@
 
 			const { data, error } = await query;
 			if (error) throw error;
-			ordenes = data || [];
+
+			const ordenesData = data || [];
+
+			const errorIds = ordenesData
+				.filter(o => o.estado === 'ERROR')
+				.map(o => o.local_id);
+
+			const auditoriaMap: Record<number, string> = {};
+			if (errorIds.length > 0) {
+				const { data: audData } = await supabase
+					.from('rtv_auditoria')
+					.select('orden_local_id, error, created_at')
+					.in('orden_local_id', errorIds)
+					.order('created_at', { ascending: false });
+
+				for (const row of (audData || [])) {
+					if (!auditoriaMap[row.orden_local_id]) {
+						auditoriaMap[row.orden_local_id] = row.error;
+					}
+				}
+			}
+
+			ordenes = ordenesData.map(o => ({
+				...o,
+				ultimo_error: auditoriaMap[o.local_id] || null
+			}));
 		} catch (e) {
 			console.error('Error loading ordenes:', e);
 		} finally {
 			loading = false;
 		}
 	}
+
+	const filters = [
+		{ id: 'todas', label: 'Todos', color: '#64748b' },
+		{ id: 'PENDIENTE_SOLICITUD', label: 'En Cola', color: '#4f46e5' },
+		{ id: 'SOLICITADA', label: 'Solicitadas', color: '#f59e0b' },
+		{ id: 'FINALIZADA', label: 'Finalizadas', color: '#10b981' },
+		{ id: 'ERROR', label: 'Errores', color: '#ef4444' },
+		{ id: 'ANULADA', label: 'Anuladas', color: '#a855f7' }
+	];
 
 	function handleFilterChange(estado: string) {
 		filter = estado;
@@ -171,15 +208,6 @@
 
 					<!-- Filter Tabs -->
 					<div class="flex overflow-x-auto no-scrollbar gap-3 py-2">
-						{@const filters = [
-							{ id: 'todas', label: 'Todos', color: '#64748b' },
-							{ id: 'PENDIENTE_SOLICITUD', label: 'En Cola', color: '#4f46e5' },
-							{ id: 'SOLICITADA', label: 'Solicitadas', color: '#f59e0b' },
-							{ id: 'FINALIZADA', label: 'Finalizadas', color: '#10b981' },
-							{ id: 'ERROR', label: 'Errores', color: '#ef4444' },
-							{ id: 'ANULADA', label: 'Anuladas', color: '#a855f7' }
-						]}
-						
 						{#each filters as f}
 							<button
 								on:click={() => handleFilterChange(f.id)}
